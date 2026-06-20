@@ -2,15 +2,26 @@ local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local VIM = game:GetService("VirtualInputManager")
+
 local player = Players.LocalPlayer
 local playerGui = player.PlayerGui
 local placeId = game.PlaceId
+
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
 repeat task.wait(0.5) until character.Parent and humanoid.Parent and rootPart.Parent
 task.wait(0.5)
+
+local CONFIG = {
+    skipTimeout       = 30,   
+    afterSkipDelay    = 2,    
+    moveTimeout       = 10, 
+    afterBuyDelay     = 1,  
+    maxHopPages       = 3,
+    httpTimeout       = 5,
+}
 
 local function autoSkipLoadingScreen()
     print(" รอหน้า loading...")
@@ -42,7 +53,7 @@ local function autoSkipLoadingScreen()
                     repeat task.wait(0.5)
                     until not obj.Visible or not obj.Parent or tick() - t > 10
 
-                    print(" Loading หายแล้ว → รอ", CONFIG.afterSkipDelay, "วิ")
+                    print("Loading หายแล้ว → รอ", CONFIG.afterSkipDelay, "วิ")
                     task.wait(CONFIG.afterSkipDelay)
                     return true
                 end
@@ -97,8 +108,8 @@ local function moveTo(pet)
 
     local direction = (targetPos - startPos).Unit
 
-    local stepSize = 2  
-    local stepDelay = 0.09 
+    local stepSize = 3      
+    local stepDelay = 0.07  
 
     for i = 0, distance, stepSize do
         local nextPos = startPos + direction * i
@@ -110,7 +121,9 @@ local function moveTo(pet)
 
         task.wait(stepDelay)
     end
+
     root.CFrame = CFrame.new(targetPos)
+
     return true
 end
 
@@ -146,6 +159,7 @@ local function collectServers()
 
     return list
 end
+
 local function hop()
     print(" ไม่เจอ → hop server")
 
@@ -167,6 +181,7 @@ local function hop()
         TeleportService:Teleport(placeId, player)
     end
 end
+
 local function firePrompt(pet)
     local prompt = pet:FindFirstChildWhichIsA("ProximityPrompt", true)
     if not prompt then
@@ -176,12 +191,13 @@ local function firePrompt(pet)
     end
 
     fireproximityprompt(prompt)
-    print(" ซื้อแล้ว:", pet.Name)
+    print("ซื้อแล้ว:", pet.Name)
 
     task.wait(CONFIG.afterBuyDelay)
-    print(" hop หา server ใหม่...")
+    print("hop หา server ใหม่...")
     hop()
 end
+
 task.wait(2)
 
 local pet = findPet()
