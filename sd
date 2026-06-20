@@ -1,0 +1,262 @@
+--[[
+    🐾 Pet Hunter Script - Grow a Garden
+    - ใช้ MoveTo เดินปกติ
+    - Auto skip loading screen
+    - Hop หลังซื้อ
+]]
+
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local VIM = game:GetService("VirtualInputManager")
+
+local player = Players.LocalPlayer
+local playerGui = player.PlayerGui
+local placeId = game.PlaceId
+
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+repeat task.wait(0.5) until character.Parent and humanoid.Parent and rootPart.Parent
+task.wait(0.5)
+
+---------------------------------------------------
+-- ⚙️ CONFIG
+---------------------------------------------------
+
+local CONFIG = {
+    skipTimeout       = 30,   -- รอ skip UI สูงสุด (วิ)
+    afterSkipDelay    = 2,    -- รอหลัง skip (วิ)
+    moveTimeout       = 10,   -- timeout MoveTo (วิ)
+    afterBuyDelay     = 1,  -- รอหลังซื้อก่อน hop (วิ)
+    maxHopPages       = 3,
+    httpTimeout       = 5,
+}
+
+---------------------------------------------------
+-- 🖱️ Auto Skip Loading Screen
+---------------------------------------------------
+
+local function autoSkipLoadingScreen()
+    print("🔍 รอหน้า loading...")
+    local deadline = tick() + CONFIG.skipTimeout
+
+    while tick() < deadline do
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if not gui:IsA("ScreenGui") then continue end
+            for _, obj in ipairs(gui:GetDescendants()) do
+                if not obj:IsA("GuiObject") then continue end
+                if not obj.Visible then continue end
+
+                local text = ""
+                if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                    text = obj.Text:lower()
+                end
+
+                if text:find("click to skip") or text:find("loading player data") then
+                    print("✅ เจอหน้า loading:", obj.Text)
+
+                    local center = workspace.CurrentCamera.ViewportSize / 2
+                    pcall(function()
+                        VIM:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                        task.wait(0.05)
+                        VIM:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                    end)
+
+                    local t = tick()
+                    repeat task.wait(0.5)
+                    until not obj.Visible or not obj.Parent or tick() - t > 10
+
+                    print("✅ Loading หายแล้ว → รอ", CONFIG.afterSkipDelay, "วิ")
+                    task.wait(CONFIG.afterSkipDelay)
+                    return true
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+
+    warn("⚠️ ไม่เจอ loading → ข้ามไปเลย")
+    return false
+end
+
+autoSkipLoadingScreen()
+
+---------------------------------------------------
+-- 🎯 เป้าหมาย
+---------------------------------------------------
+
+local targetPets = {
+    Unicorn = true,
+    Raccoon = true
+}
+
+---------------------------------------------------
+-- 📦 Folder Helper
+---------------------------------------------------
+
+local function getFolder()
+    local map = workspace:FindFirstChild("Map")
+    if not map then return nil end
+    return map:FindFirstChild("WildPetSpawns")
+end
+
+---------------------------------------------------
+-- 🔍 Find Pet
+---------------------------------------------------
+
+local function findPet()
+    local folder = getFolder()
+    if not folder then return nil end
+
+    for _, pet in ipairs(folder:GetDescendants()) do
+        for name in pairs(targetPets) do
+            if pet.Name:find(name) then
+                return pet
+            end
+        end
+    end
+
+    return nil
+end
+
+local function moveTo(pet)
+    local part = pet:FindFirstChildWhichIsA("BasePart", true)
+    if not part then return false end
+
+    local root = character:WaitForChild("HumanoidRootPart")
+
+    local startPos = root.Position
+    local targetPos = part.Position + Vector3.new(0, 3, 0)
+
+    local distance = (targetPos - startPos).Magnitude
+    if distance == 0 then return true end
+
+    local direction = (targetPos - startPos).Unit
+
+    local stepSize = 2       -- ยิ่งน้อย = เนียนขึ้น
+    local stepDelay = 0.09   -- ยิ่งมาก = ช้าลง
+
+    for i = 0, distance, stepSize do
+        local nextPos = startPos + direction * i
+
+        -- กันฟิสิกส์เด้ง
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+
+        root.CFrame = CFrame.new(nextPos)
+
+        task.wait(stepDelay)
+    end
+
+    -- จุดสุดท้าย
+    root.CFrame = CFrame.new(targetPos)
+
+    return true
+end
+---------------------------------------------------
+-- 🌐 Server System
+---------------------------------------------------
+
+local function getServers(cursor)
+    local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+    if cursor then url = url .. "&cursor=" .. cursor end
+
+    local success, response = pcall(function() return game:HttpGet(url) end)
+    if not success or not response then return nil end
+
+    local ok, data = pcall(function() return HttpService:JSONDecode(response) end)
+    if not ok or not data or not data.data then return nil end
+
+    return data
+end
+
+local function collectServers()
+    local list, cursor = {}, nil
+
+    for _ = 1, CONFIG.maxHopPages do
+        local data = getServers(cursor)
+        if not data then break end
+
+        for _, v in ipairs(data.data) do
+            if v.id ~= game.JobId and v.playing < v.maxPlayers then
+                table.insert(list, v.id)
+            end
+        end
+
+        cursor = data.nextPageCursor
+        if not cursor then break end
+    end
+
+    return list
+end
+
+---------------------------------------------------
+-- 🚀 Hop
+---------------------------------------------------
+
+local function hop()
+    print("❌ ไม่เจอ → hop server")
+
+    local servers = collectServers()
+
+    if not servers or #servers == 0 then
+        warn("⚠️ fallback teleport")
+        TeleportService:Teleport(placeId, player)
+        return
+    end
+
+    local target = servers[math.random(1, #servers)]
+    local ok, err = pcall(function()
+        TeleportService:TeleportToPlaceInstance(placeId, target, player)
+    end)
+
+    if not ok then
+        warn("❌ hop failed:", err)
+        TeleportService:Teleport(placeId, player)
+    end
+end
+
+---------------------------------------------------
+-- 🎯 Buy → Hop
+---------------------------------------------------
+
+local function firePrompt(pet)
+    local prompt = pet:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if not prompt then
+        warn("⚠️ ไม่เจอ ProximityPrompt → hop")
+        hop()
+        return
+    end
+
+    fireproximityprompt(prompt)
+    print("🛒 ซื้อแล้ว:", pet.Name)
+
+    task.wait(CONFIG.afterBuyDelay)
+    print("🚀 hop หา server ใหม่...")
+    hop()
+end
+
+---------------------------------------------------
+-- 🔁 MAIN
+---------------------------------------------------
+
+task.wait(2)
+
+local pet = findPet()
+
+if pet then
+    print("🎯 เจอ:", pet.Name)
+
+    local ok = moveTo(pet)
+
+    if ok then
+        task.wait(0.2)
+        firePrompt(pet)
+    else
+        hop()
+    end
+else
+    hop()
+end
